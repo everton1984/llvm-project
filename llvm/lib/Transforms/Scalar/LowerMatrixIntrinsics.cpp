@@ -511,6 +511,7 @@ public:
     if (II)
       switch (II->getIntrinsicID()) {
       case Intrinsic::matrix_multiply:
+      case Intrinsic::matrix_multiply_add:
       case Intrinsic::matrix_transpose:
       case Intrinsic::matrix_column_major_load:
       case Intrinsic::matrix_column_major_store:
@@ -540,12 +541,18 @@ public:
 
       Value *MatrixA;
       Value *MatrixB;
+      Value *MatrixC;
       Value *M;
       Value *N;
       Value *K;
       if (match(Inst, m_Intrinsic<Intrinsic::matrix_multiply>(
                           m_Value(MatrixA), m_Value(MatrixB), m_Value(M),
                           m_Value(N), m_Value(K)))) {
+        Propagate = setShapeInfo(Inst, {M, K});
+      } else if (match(Inst,
+                       m_Intrinsic<Intrinsic::matrix_multiply_add>(
+                           m_Value(MatrixA), m_Value(MatrixB), m_Value(MatrixC),
+                           m_Value(M), m_Value(N), m_Value(K)))) {
         Propagate = setShapeInfo(Inst, {M, K});
       } else if (match(Inst, m_Intrinsic<Intrinsic::matrix_transpose>(
                                  m_Value(MatrixA), m_Value(M), m_Value(N)))) {
@@ -611,6 +618,7 @@ public:
 
       Value *MatrixA;
       Value *MatrixB;
+      Value *MatrixC;
       Value *M;
       Value *N;
       Value *K;
@@ -622,7 +630,18 @@ public:
 
         if (setShapeInfo(MatrixB, {N, K}))
           pushInstruction(MatrixB, WorkList);
+      } else if (match(V,
+                       m_Intrinsic<Intrinsic::matrix_multiply_add>(
+                           m_Value(MatrixA), m_Value(MatrixB), m_Value(MatrixC),
+                           m_Value(M), m_Value(N), m_Value(K)))) {
+        if (setShapeInfo(MatrixA, {M, N}))
+          pushInstruction(MatrixA, WorkList);
 
+        if (setShapeInfo(MatrixB, {N, K}))
+          pushInstruction(MatrixB, WorkList);
+
+        if (setShapeInfo(MatrixC, {M, K}))
+          pushInstruction(MatrixC, WorkList);
       } else if (match(V, m_Intrinsic<Intrinsic::matrix_transpose>(
                               m_Value(MatrixA), m_Value(M), m_Value(N)))) {
         // Flip dimensions.
@@ -673,6 +692,7 @@ public:
 
           switch (II->getIntrinsicID()) {
           case Intrinsic::matrix_multiply:
+          case Intrinsic::matrix_multiply_add:
           case Intrinsic::matrix_transpose:
           case Intrinsic::matrix_column_major_load:
           case Intrinsic::matrix_column_major_store:
@@ -768,6 +788,9 @@ public:
       break;
     case Intrinsic::matrix_column_major_store:
       LowerColumnMajorStore(Inst);
+      break;
+    case Intrinsic::matrix_multiply_add:
+      LowerMultiplyAdd(Inst);
       break;
     default:
       return false;
@@ -1009,11 +1032,13 @@ public:
     }
   }
 
-  /// Compute \p Result += \p A * \p B for input matrices with left-associating
-  /// addition.
+  /// Compute \p Result += \p A * \p B + \p ACC for input matrices with
+  /// left-associating addition.
+  template <bool isAccumulating = false>
   void emitMatrixMultiply(MatrixTy &Result, const MatrixTy &A,
                           const MatrixTy &B, bool AllowContraction,
-                          IRBuilder<> &Builder, bool isTiled) {
+                          IRBuilder<> &Builder, bool isTiled,
+                          const MatrixTy *ACC = nullptr) {
     const unsigned VF = std::max<unsigned>(
         TTI.getRegisterBitWidth(TargetTransformInfo::RGK_FixedWidthVector)
                 .getFixedSize() /
@@ -1030,20 +1055,25 @@ public:
     unsigned NumComputeOps = 0;
     if (A.isColumnMajor()) {
       // Multiply columns from the first operand with scalars from the second
-      // operand. Then move along the K axes and accumulate the columns.  With
+      // operand. Then move along the K axes and accumulate the columns. With
       // this the adds can be vectorized without reassociation.
       for (unsigned J = 0; J < C; ++J) {
         unsigned BlockSize = VF;
         // If Result is zero, we don't need to accumulate in the K==0 iteration.
-        bool isSumZero = isa<ConstantAggregateZero>(Result.getColumn(J));
+        bool isSumZero = isAccumulating
+                             ? false
+                             : isa<ConstantAggregateZero>(Result.getColumn(J));
 
         for (unsigned I = 0; I < R; I += BlockSize) {
           // Gradually lower the vectorization factor to cover the remainder.
           while (I + BlockSize > R)
             BlockSize /= 2;
 
-          Value *Sum = isTiled ? Result.extractVector(I, J, BlockSize, Builder)
-                               : nullptr;
+          Value *Sum =
+              isAccumulating ? ACC->extractVector(I, J, BlockSize, Builder)
+              : isTiled      ? Result.extractVector(I, J, BlockSize, Builder)
+                             : nullptr;
+          ;
           for (unsigned K = 0; K < M; ++K) {
             Value *L = A.extractVector(I, K, BlockSize, Builder);
             Value *RH = Builder.CreateExtractElement(B.getColumn(J), K);
@@ -1062,13 +1092,17 @@ public:
       // the adds can be vectorized without reassociation.
       for (unsigned I = 0; I < R; ++I) {
         unsigned BlockSize = VF;
-        bool isSumZero = isa<ConstantAggregateZero>(Result.getRow(I));
+        bool isSumZero = isAccumulating
+                             ? false
+                             : isa<ConstantAggregateZero>(Result.getRow(I));
         for (unsigned J = 0; J < C; J += BlockSize) {
           // Gradually lower the vectorization factor to cover the remainder.
           while (J + BlockSize > C)
             BlockSize /= 2;
 
-          Value *Sum = nullptr;
+          Value *Sum = isAccumulating
+                           ? ACC->extractVector(I, J, BlockSize, Builder)
+                           : nullptr;
           for (unsigned K = 0; K < M; ++K) {
             Value *R = B.extractVector(K, J, BlockSize, Builder);
             Value *LH = Builder.CreateExtractElement(A.getVector(I), K);
@@ -1367,6 +1401,40 @@ public:
     }
   }
 
+  /// Lowers llvm.matrix.multiply.add
+  void LowerMultiplyAdd(CallInst *MatMulAdd) {
+    IRBuilder<> Builder(MatMulAdd);
+    auto *EltType = cast<VectorType>(MatMulAdd->getType())->getElementType();
+    ShapeInfo LShape(MatMulAdd->getArgOperand(3), MatMulAdd->getArgOperand(4));
+    ShapeInfo RShape(MatMulAdd->getArgOperand(4), MatMulAdd->getArgOperand(5));
+    ShapeInfo AShape(MatMulAdd->getArgOperand(3), MatMulAdd->getArgOperand(5));
+
+    const MatrixTy &Lhs =
+        getMatrix(MatMulAdd->getArgOperand(0), LShape, Builder);
+    const MatrixTy &Rhs =
+        getMatrix(MatMulAdd->getArgOperand(1), RShape, Builder);
+    const MatrixTy &Acc =
+        getMatrix(MatMulAdd->getArgOperand(2), AShape, Builder);
+    assert(Lhs.getElementType() == Rhs.getElementType() &&
+           "Matrix multiply argument element types do not match.");
+
+    const unsigned R = LShape.NumRows;
+    const unsigned C = RShape.NumColumns;
+    assert(LShape.NumColumns == RShape.NumRows);
+
+    // Initialize the output
+    MatrixTy Result(R, C, EltType);
+    assert(Lhs.getElementType() == Result.getElementType() &&
+           "Matrix multiply result element type does not match arguments.");
+
+    bool AllowContract =
+        AllowContractEnabled ||
+        (isa<FPMathOperator>(MatMulAdd) && MatMulAdd->hasAllowContract());
+    emitMatrixMultiply<true>(Result, Lhs, Rhs, AllowContract, Builder, false,
+                             &Acc);
+    finalizeLowering(MatMulAdd, Result, Builder);
+  }
+
   /// Lowers llvm.matrix.multiply.
   void LowerMultiply(CallInst *MatMul) {
     IRBuilder<> Builder(MatMul);
@@ -1648,6 +1716,14 @@ public:
           prettyPrintMatrixType(II->getOperand(1), SS);
           SS << "." << *II->getType()->getScalarType();
           break;
+        case Intrinsic::matrix_multiply_add:
+          prettyPrintMatrixType(II->getOperand(0), SS);
+          SS << ".";
+          prettyPrintMatrixType(II->getOperand(1), SS);
+          SS << "." << *II->getType()->getScalarType();
+          prettyPrintMatrixType(II->getOperand(2), SS);
+          SS << "." << *II->getType()->getScalarType();
+          break;
         case Intrinsic::matrix_transpose:
           prettyPrintMatrixType(II->getOperand(0), SS);
           SS << "." << *II->getType()->getScalarType();
@@ -1672,6 +1748,7 @@ public:
       if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(CI)) {
         switch (II->getIntrinsicID()) {
         case Intrinsic::matrix_multiply:
+        case Intrinsic::matrix_multiply_add:
           return 3;
         case Intrinsic::matrix_transpose:
           return 2;

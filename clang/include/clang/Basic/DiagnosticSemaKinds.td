@@ -11107,6 +11107,10 @@ def err_matrix_separate_incomplete_index: Error<
 def err_matrix_subscript_comma: Error<
   "comma expressions are not allowed as indices in matrix subscript expressions">;
 def err_builtin_matrix_arg: Error<"1st argument must be a matrix">;
+def err_builtin_matrix_dimension_mismatch: Error<
+  "The number of columns of the 1st argument must be the same as the number of rows of the 2nd argument and the number of rows of the 1st argument and columns of the 2nd argument must match 3rd argument">;
+def err_builtin_matrix_scalar_type: Error<
+  "All arguments elements type must match">;
 def err_builtin_matrix_scalar_unsigned_arg: Error<
   "%0 argument must be a constant unsigned integer expression">;
 def err_builtin_matrix_pointer_arg: Error<

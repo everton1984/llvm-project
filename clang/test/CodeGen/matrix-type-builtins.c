@@ -9,10 +9,35 @@
 typedef double dx5x5_t __attribute__((matrix_type(5, 5)));
 typedef float fx2x3_t __attribute__((matrix_type(2, 3)));
 typedef float fx3x2_t __attribute__((matrix_type(3, 2)));
+typedef float fx2x2_t __attribute__((matrix_type(5, 5)));
 typedef int ix20x4_t __attribute__((matrix_type(20, 4)));
 typedef int ix4x20_t __attribute__((matrix_type(4, 20)));
 typedef unsigned ux1x6_t __attribute__((matrix_type(1, 6)));
 typedef unsigned ux6x1_t __attribute__((matrix_type(6, 1)));
+
+void multiply_add_2x2(const fx2x2_t *a, const fx2x2_t *b, fx2x2_t *c) {
+  // CHECK-LABEL: define{{.*.*.*}} void @multiply_add_2x2(
+  // CHECK:       [[A_ADDR:%.*]] = alloca [25 x float]*, align 8
+  // CHECK-NEXT:  [[B_ADDR:%.*]] = alloca [25 x float]*, align 8
+  // CHECK-NEXT:  [[C_ADDR:%.*]] = alloca [25 x float]*, align 8
+  // CHECK-NEXT:  store [25 x float]* %a, [25 x float]** [[A_ADDR]], align 8
+  // CHECK-NEXT:  store [25 x float]* %b, [25 x float]** [[B_ADDR]], align 8
+  // CHECK-NEXT:  store [25 x float]* %c, [25 x float]** [[C_ADDR]], align 8
+  // CHECK-NEXT:  [[A_L:%.*]] = load [25 x float]*, [25 x float]** [[A_ADDR]], align 8
+  // CHECK-NEXT:  [[A_B:%.*]] = bitcast [25 x float]* [[A_L]] to <25 x float>*
+  // CHECK-NEXT:  [[A:%.*]] = load <25 x float>, <25 x float>* [[A_B]], align 4
+  // CHECK-NEXT:  [[B_L:%.*]] = load [25 x float]*, [25 x float]** [[B_ADDR]], align 8
+  // CHECK-NEXT:  [[B_B:%.*]] = bitcast [25 x float]* [[B_L]] to <25 x float>*
+  // CHECK-NEXT:  [[B:%.*]] = load <25 x float>, <25 x float>* [[B_B]], align 4
+  // CHECK-NEXT:  [[C_L:%.*]] = load [25 x float]*, [25 x float]** [[C_ADDR]], align 8
+  // CHECK-NEXT:  [[C_B:%.*]] = bitcast [25 x float]* [[C_L]] to <25 x float>*
+  // CHECK-NEXT:  [[C:%.*]] = load <25 x float>, <25 x float>* [[C_B]], align 4
+  // CHECK-NEXT:  [[MADD:%.*]] = call <25 x float> @llvm.matrix.multiply.add.v25f32.v25f32.v25f32.v25f32(<25 x float> [[A]], <25 x float> [[B]], <25 x float> [[C]], i32 5, i32 5, i32 5)
+  // CHECK-NEXT:  [[CR_L:%.*]] = load [25 x float]*, [25 x float]** [[C_ADDR]], align 8
+  // CHECK-NEXT:  [[CR_B:%.*]] = bitcast [25 x float]* [[CR_L]] to <25 x float>*
+  // CHECK-NEXT: store <25 x float> [[MADD]], <25 x float>* [[CR_B]], align 4
+  *c = __builtin_matrix_multiply_add(*a, *b, *c);
+}
 
 void transpose_double_5x5(dx5x5_t *a) {
   // CHECK-LABEL: define{{.*}} void @transpose_double_5x5(

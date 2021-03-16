@@ -204,6 +204,23 @@ Definitions:
 * *T* - Element type
 * *row*, *col* - Row and column arguments respectively.
 
+``M3 __builtin_matrix_multiply_add(M1 matrixA, M2 matrixB, M3 matrixC)``
+
+**Returns**: A matrix ``Res`` equivalent to the code below, where ``row`` refers to the
+number of rows of ``M1``, ``depth`` to the number of either columns of ``M1`` or rows of ``M2`` and
+``col`` to the number of columns of ``M2``.
+
+**Effects**: Equivalent to:
+
+.. code-block:: c++
+
+  M Res;
+  for (int C = 0; C < col; ++C)
+    for (int R = 0; R < row; ++R)
+      Acc = matrixC[R][C];
+      for (int K = 0; K < depth; ++K)
+         Acc += matrix[R][C];
+      Res[R][C] = Acc
 
 ``M2 __builtin_matrix_transpose(M1 matrix)``
 

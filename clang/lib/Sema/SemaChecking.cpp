@@ -1967,6 +1967,9 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
   case Builtin::BI__builtin_matrix_column_major_store:
     return SemaBuiltinMatrixColumnMajorStore(TheCall, TheCallResult);
 
+  case Builtin::BI__builtin_matrix_multiply_add:
+    return SemaBuiltinMatrixMultiplyAdd(TheCall, TheCallResult);
+
   case Builtin::BI__builtin_get_device_side_mangled_name: {
     auto Check = [](CallExpr *TheCall) {
       if (TheCall->getNumArgs() != 1)
@@ -16149,6 +16152,78 @@ ExprResult Sema::SemaBuiltinMatrixColumnMajorLoad(CallExpr *TheCall,
 
   TheCall->setType(
       Context.getConstantMatrixType(ElementTy, *MaybeRows, *MaybeColumns));
+  return CallResult;
+}
+
+ExprResult Sema::SemaBuiltinMatrixMultiplyAdd(CallExpr *TheCall,
+                                              ExprResult CallResult) {
+  if (!getLangOpts().MatrixTypes) {
+    Diag(TheCall->getBeginLoc(), diag::err_builtin_matrix_disabled);
+    return ExprError();
+  }
+
+  if (checkArgCount(*this, TheCall, 3))
+    return ExprError();
+
+  ExprResult MatrixAArg = DefaultLvalueConversion(TheCall->getArg(0));
+  if (MatrixAArg.isInvalid())
+    return MatrixAArg;
+  Expr *MatrixA = MatrixAArg.get();
+
+  auto *MTypeA = MatrixA->getType()->getAs<ConstantMatrixType>();
+  if (!MTypeA) {
+    Diag(MatrixA->getBeginLoc(), diag::err_builtin_matrix_arg);
+    return ExprError();
+  }
+
+  ExprResult MatrixBArg = DefaultLvalueConversion(TheCall->getArg(1));
+  if (MatrixBArg.isInvalid())
+    return MatrixBArg;
+  Expr *MatrixB = MatrixBArg.get();
+
+  auto *MTypeB = MatrixB->getType()->getAs<ConstantMatrixType>();
+  if (!MTypeB) {
+    Diag(MatrixB->getBeginLoc(), diag::err_builtin_matrix_arg);
+    return ExprError();
+  }
+
+  ExprResult MatrixCArg = DefaultLvalueConversion(TheCall->getArg(2));
+  if (MatrixCArg.isInvalid())
+    return MatrixCArg;
+  Expr *MatrixC = MatrixCArg.get();
+
+  auto *MTypeC = MatrixC->getType()->getAs<ConstantMatrixType>();
+  if (!MTypeC) {
+    Diag(MatrixC->getBeginLoc(), diag::err_builtin_matrix_arg);
+    return ExprError();
+  }
+
+  // Check wether all matrices have the same element type. We don't support
+  // mixed precision as of yet.
+  if (!(Context.hasSameType(MTypeC->getElementType(),
+                            MTypeA->getElementType()) &&
+        Context.hasSameType(MTypeC->getElementType(),
+                            MTypeB->getElementType()))) {
+    Diag(MatrixC->getBeginLoc(), diag::err_builtin_matrix_scalar_type);
+    return ExprError();
+  }
+
+  // Check if dimensions are appropriate.
+  if (MTypeA->getNumColumns() != MTypeB->getNumRows() ||
+      !(MTypeC->getNumColumns() == MTypeB->getNumColumns() &&
+        MTypeC->getNumRows() == MTypeA->getNumRows())) {
+    Diag(MatrixC->getBeginLoc(), diag::err_builtin_matrix_dimension_mismatch);
+    return ExprError();
+  }
+
+  // Prepare Result matrix.
+  QualType ResultType = Context.getConstantMatrixType(
+      MTypeC->getElementType(), MTypeC->getNumRows(), MTypeC->getNumColumns());
+
+  TheCall->setType(ResultType);
+  TheCall->setArg(0, MatrixA);
+  TheCall->setArg(1, MatrixB);
+  TheCall->setArg(2, MatrixC);
   return CallResult;
 }
 

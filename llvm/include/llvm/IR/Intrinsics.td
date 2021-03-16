@@ -1571,6 +1571,13 @@ def int_matrix_multiply
               [IntrNoSync, IntrWillReturn, IntrNoMem, IntrSpeculatable, ImmArg<ArgIndex<2>>,
                ImmArg<ArgIndex<3>>, ImmArg<ArgIndex<4>>]>;
 
+def int_matrix_multiply_add
+  : DefaultAttrsIntrinsic<[llvm_anyvector_ty],
+              [llvm_anyvector_ty, llvm_anyvector_ty, llvm_anyvector_ty, llvm_i32_ty, llvm_i32_ty,
+               llvm_i32_ty],
+              [IntrNoSync, IntrWillReturn, IntrNoMem, IntrSpeculatable, ImmArg<ArgIndex<3>>,
+               ImmArg<ArgIndex<4>>, ImmArg<ArgIndex<5>>]>;
+
 def int_matrix_column_major_load
   : DefaultAttrsIntrinsic<[llvm_anyvector_ty],
               [LLVMPointerToElt<0>, llvm_i64_ty, llvm_i1_ty,

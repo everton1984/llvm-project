@@ -96,3 +96,14 @@ void column_major_store(sx5x10_t *m1, ix3x2_t *m2, float *p1, int *p2, struct Fo
   __builtin_matrix_column_major_store(*m1, p4, 20);
   // expected-error@-1 {{cannot store matrix to read-only pointer}}
 }
+
+void multiply_add(sx5x10_t a, sx5x10_t b, sx5x10_t c, dx3x3 d, dx3x3 e, ix3x3 f) {
+  c = __builtin_matrix_multiply_add(a, b, c);
+  // expected-error@-1 {{The number of columns of the 1st argument must be the same as the number of rows of the 2nd argument and the number of rows of the 1st argument and columns of the 2nd argument must match 3rd argument}}
+
+  f = __builtin_matrix_multiply_add(d, e, f);
+  // expected-error@-1 {{All arguments elements type must match}}
+
+  f = __builtin_matrix_multiply_add(d, e, e);
+  // expected-error@-1 {{assigning to 'ix3x3' (aka 'unsigned int __attribute__((matrix_type(3, 3)))') from incompatible type 'double __attribute__((matrix_type(3, 3)))'}}
+}

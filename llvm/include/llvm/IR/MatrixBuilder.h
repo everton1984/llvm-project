@@ -125,6 +125,31 @@ public:
     return B.CreateCall(TheFn->getFunctionType(), TheFn, Ops, Name);
   }
 
+  /// Create a llvm.matrix.multiply.add call, multiplying matrixes \p LHS and \p
+  /// RHS and adding the result to \p ACC.
+  CallInst *CreateMatrixMultiplyAdd(Value *LHS, Value *RHS, Value *ACC,
+                                    unsigned LHSRows, unsigned LHSColumns,
+                                    unsigned RHSColumns,
+                                    const Twine &Name = "") {
+    auto *LHSType = cast<VectorType>(LHS->getType());
+    auto *RHSType = cast<VectorType>(RHS->getType());
+    auto *AccType = cast<VectorType>(ACC->getType());
+
+    auto *ReturnType =
+        FixedVectorType::get(LHSType->getElementType(), LHSRows * RHSColumns);
+    Value *Ops[] = {LHS,
+                    RHS,
+                    ACC,
+                    B.getInt32(LHSRows),
+                    B.getInt32(LHSColumns),
+                    B.getInt32(RHSColumns)};
+    Type *OverloadedTypes[] = {ReturnType, LHSType, RHSType, AccType};
+
+    Function *TheFn = Intrinsic::getDeclaration(
+        getModule(), Intrinsic::matrix_multiply_add, OverloadedTypes);
+    return B.CreateCall(TheFn->getFunctionType(), TheFn, Ops, Name);
+  }
+
   /// Create a llvm.matrix.multiply call, multiplying matrixes \p LHS and \p
   /// RHS.
   CallInst *CreateMatrixMultiply(Value *LHS, Value *RHS, unsigned LHSRows,

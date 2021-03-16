@@ -3067,6 +3067,23 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     return RValue::get(Result);
   }
 
+  case Builtin::BI__builtin_matrix_multiply_add: {
+    MatrixBuilder<CGBuilderTy> MB(Builder);
+    Value *MatrixA = EmitScalarExpr(E->getArg(0));
+    Value *MatrixB = EmitScalarExpr(E->getArg(1));
+    Value *MatrixC = EmitScalarExpr(E->getArg(2));
+
+    const auto *MatrixTy1 =
+        E->getArg(0)->getType()->getAs<ConstantMatrixType>();
+    const auto *MatrixTy2 =
+        E->getArg(1)->getType()->getAs<ConstantMatrixType>();
+
+    Value *Result = MB.CreateMatrixMultiplyAdd(
+        MatrixA, MatrixB, MatrixC, MatrixTy1->getNumRows(),
+        MatrixTy1->getNumColumns(), MatrixTy2->getNumColumns());
+    return RValue::get(Result);
+  }
+
   case Builtin::BIfinite:
   case Builtin::BI__finite:
   case Builtin::BIfinitef:
